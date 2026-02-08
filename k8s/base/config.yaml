@@ -1,0 +1,130 @@
+# ==============================================================================
+# ConfigMap - Application Configuration
+# ==============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sre-demo-api-config
+  namespace: production
+  labels:
+    app: sre-demo-api
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  WORKERS: "4"
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
+  JAEGER_ENDPOINT: "http://jaeger-collector.observability:14268/api/traces"
+  ALLOWED_ORIGINS: '["https://app.company.com"]'
+
+---
+# ==============================================================================
+# Secret - Sensitive Configuration
+# ==============================================================================
+# NOTE: In production, use external secret management:
+# - AWS Secrets Manager
+# - HashiCorp Vault
+# - Sealed Secrets
+# - External Secrets Operator
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sre-demo-api-secrets
+  namespace: production
+  labels:
+    app: sre-demo-api
+type: Opaque
+stringData:
+  # Database credentials
+  DATABASE_URL: "postgresql://user:CHANGE_ME@postgres.db:5432/production"
+  
+  # Redis credentials
+  REDIS_URL: "redis://:CHANGE_ME@redis.cache:6379/0"
+  
+  # API keys
+  SECRET_KEY: "CHANGE_ME_TO_RANDOM_STRING"
+  
+  # External service credentials
+  AWS_ACCESS_KEY_ID: "CHANGE_ME"
+  AWS_SECRET_ACCESS_KEY: "CHANGE_ME"
+
+# ==============================================================================
+# SECURITY NOTES:
+#
+# 1. NEVER commit actual secrets to Git
+# 2. Use base64 encoding for 'data' field, or 'stringData' for plain text
+# 3. Encrypt secrets at rest (enable encryption in K8s)
+# 4. Use RBAC to limit secret access
+# 5. Rotate secrets regularly
+# 6. Consider using external secret managers:
+#
+#    Example with External Secrets Operator:
+#    ---
+#    apiVersion: external-secrets.io/v1beta1
+#    kind: ExternalSecret
+#    metadata:
+#      name: sre-demo-api-secrets
+#    spec:
+#      refreshInterval: 1h
+#      secretStoreRef:
+#        name: aws-secrets-manager
+#        kind: SecretStore
+#      target:
+#        name: sre-demo-api-secrets
+#      data:
+#        - secretKey: DATABASE_URL
+#          remoteRef:
+#            key: prod/sre-demo-api/db-url
+# ==============================================================================
+
+---
+# ==============================================================================
+# ServiceAccount - RBAC Identity
+# ==============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sre-demo-api
+  namespace: production
+  labels:
+    app: sre-demo-api
+automountServiceAccountToken: false
+
+---
+# ==============================================================================
+# Role - Permissions within namespace
+# ==============================================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sre-demo-api
+  namespace: production
+rules:
+  # Allow reading ConfigMaps (if app needs dynamic config)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+
+---
+# ==============================================================================
+# RoleBinding - Assign role to service account
+# ==============================================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sre-demo-api
+  namespace: production
+subjects:
+  - kind: ServiceAccount
+    name: sre-demo-api
+    namespace: production
+roleRef:
+  kind: Role
+  name: sre-demo-api
+  apiGroup: rbac.authorization.k8s.io

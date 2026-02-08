@@ -1,0 +1,81 @@
+# ==============================================================================
+# Kubernetes Service - Internal (ClusterIP)
+# ==============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-demo-api
+  namespace: production
+  labels:
+    app: sre-demo-api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # For AWS
+spec:
+  type: ClusterIP
+  selector:
+    app: sre-demo-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: None
+
+---
+# ==============================================================================
+# Kubernetes Service - External (LoadBalancer)
+# ==============================================================================
+# Used for external access in cloud environments
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-demo-api-external
+  namespace: production
+  labels:
+    app: sre-demo-api
+  annotations:
+    # AWS specific
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # GCP specific
+    # cloud.google.com/neg: '{"ingress": true}'
+    # Azure specific
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+spec:
+  type: LoadBalancer
+  selector:
+    app: sre-demo-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+
+---
+# ==============================================================================
+# Headless Service - For StatefulSet (if needed)
+# ==============================================================================
+# Used for direct pod-to-pod communication
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-demo-api-headless
+  namespace: production
+  labels:
+    app: sre-demo-api
+spec:
+  clusterIP: None  # Headless
+  selector:
+    app: sre-demo-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,67 @@
+# ==============================================================================
+# Kustomize Overlay - Production Environment
+# ==============================================================================
+# Production-specific configuration and resource adjustments
+# ==============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: production
+
+# Base resources
+resources:
+  - ../../base
+  - network-policy.yaml
+  - prometheus-service-monitor.yaml
+
+# Common labels for this environment
+commonLabels:
+  environment: production
+  tier: backend
+
+# Patches for production-specific changes
+patches:
+  # ===========================================================================
+  # Deployment Patches
+  # ===========================================================================
+  - target:
+      kind: Deployment
+      name: sre-demo-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+
+# ConfigMap overrides
+configMapGenerator:
+  - name: sre-demo-api-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - WORKERS=8
+      - ALLOWED_ORIGINS=["https://app.company.com"]
+
+# Images (set by CI/CD)
+images:
+  - name: sre-demo-api
+    newName: your-registry.io/sre-demo-api
+    newTag: main-abc123  # Will be updated by CI/CD
+
+# Replica configuration
+replicas:
+  - name: sre-demo-api
+    count: 5

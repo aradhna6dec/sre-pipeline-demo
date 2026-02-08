@@ -1,0 +1,388 @@
+// ==============================================================================
+// Jenkinsfile - Declarative Pipeline
+// ==============================================================================
+// Enterprise-grade CI/CD with:
+// - Parallel execution
+// - Quality gates
+// - Security scanning
+// - Blue-green deployment support
+// ==============================================================================
+
+@Library('shared-pipeline-library') _  // Optional: custom Jenkins shared library
+
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: agent
+spec:
+  serviceAccountName: jenkins
+  containers:
+  - name: python
+    image: python:3.11-slim
+    command: ['cat']
+    tty: true
+  - name: docker
+    image: docker:24-dind
+    command: ['dockerd', '--host=unix:///var/run/docker.sock']
+    securityContext:
+      privileged: true
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command: ['cat']
+    tty: true
+  - name: trivy
+    image: aquasec/trivy:latest
+    command: ['cat']
+    tty: true
+'''
+        }
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+        timeout(time: 1, unit: 'HOURS')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+    
+    environment {
+        DOCKER_REGISTRY = 'your-registry.io'
+        IMAGE_NAME = 'sre-demo-api'
+        K8S_NAMESPACE = "${BRANCH_NAME == 'main' ? 'production' : 'development'}"
+        PYTHON_VERSION = '3.11'
+        // Credentials from Jenkins
+        DOCKER_CREDS = credentials('docker-registry-creds')
+        K8S_CREDS = credentials('k8s-config')
+        SONAR_TOKEN = credentials('sonar-token')
+    }
+    
+    stages {
+        // ======================================================================
+        // Checkout & Setup
+        // ======================================================================
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${BRANCH_NAME}-${GIT_COMMIT_SHORT}"
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Parallel Quality Checks
+        // ======================================================================
+        stage('Quality Gates') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                pip install black flake8 mypy isort
+                                black --check app/ || true
+                                flake8 app/ --max-line-length=120
+                                mypy app/ --ignore-missing-imports || true
+                                isort --check-only app/ || true
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Security - Bandit') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                pip install bandit
+                                bandit -r app/ -f json -o bandit-report.json || true
+                            '''
+                            archiveArtifacts artifacts: 'bandit-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+                
+                stage('Security - Dependency Check') {
+                    steps {
+                        container('python') {
+                            sh '''
+                                pip install safety
+                                safety check --json --file requirements.txt || true
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Unit Tests
+        // ======================================================================
+        stage('Test') {
+            steps {
+                container('python') {
+                    sh '''
+                        pip install -r requirements.txt
+                        pip install pytest pytest-cov pytest-asyncio
+                        
+                        pytest tests/ \
+                            --cov=app \
+                            --cov-report=xml \
+                            --cov-report=html \
+                            --junitxml=junit.xml \
+                            -v
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'junit.xml'
+                    publishHTML([
+                        reportDir: 'htmlcov',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                }
+            }
+        }
+        
+        // ======================================================================
+        // SonarQube Analysis
+        // ======================================================================
+        stage('SonarQube') {
+            when {
+                branch 'main'
+            }
+            steps {
+                container('python') {
+                    script {
+                        def scannerHome = tool 'SonarScanner'
+                        withSonarQubeEnv('SonarQube') {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                    -Dsonar.projectKey=sre-demo-api \
+                                    -Dsonar.sources=app \
+                                    -Dsonar.python.coverage.reportPaths=coverage.xml \
+                                    -Dsonar.python.xunit.reportPath=junit.xml
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Quality Gate') {
+            when {
+                branch 'main'
+            }
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Docker Build & Push
+        // ======================================================================
+        stage('Build Docker Image') {
+            steps {
+                container('docker') {
+                    sh """
+                        echo ${DOCKER_CREDS_PSW} | docker login ${DOCKER_REGISTRY} -u ${DOCKER_CREDS_USR} --password-stdin
+                        
+                        docker build \
+                            -f docker/production/Dockerfile \
+                            -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                            -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest \
+                            --build-arg BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                            --build-arg VCS_REF=${GIT_COMMIT_SHORT} \
+                            .
+                        
+                        docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    """
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Container Security Scan
+        // ======================================================================
+        stage('Scan Image') {
+            steps {
+                container('trivy') {
+                    sh """
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format json \
+                            --output trivy-report.json \
+                            ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true
+                    """
+                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Deploy to Kubernetes
+        // ======================================================================
+        stage('Deploy') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                container('kubectl') {
+                    sh """
+                        # Configure kubectl
+                        mkdir -p ~/.kube
+                        echo "${K8S_CREDS}" > ~/.kube/config
+                        
+                        # Update deployment image
+                        kubectl set image deployment/sre-demo-api \
+                            api=${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                            -n ${K8S_NAMESPACE}
+                        
+                        # Wait for rollout
+                        kubectl rollout status deployment/sre-demo-api \
+                            -n ${K8S_NAMESPACE} \
+                            --timeout=10m
+                    """
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Smoke Tests
+        // ======================================================================
+        stage('Smoke Test') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl run smoke-test-${BUILD_NUMBER} \
+                            --image=curlimages/curl:latest \
+                            --restart=Never \
+                            --rm \
+                            -i \
+                            --namespace=${K8S_NAMESPACE} \
+                            -- curl -f http://sre-demo-api/health/live
+                    """
+                }
+            }
+        }
+        
+        // ======================================================================
+        // Load Testing (Development only)
+        // ======================================================================
+        stage('Load Test') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                container('python') {
+                    sh '''
+                        pip install locust
+                        locust -f tests/load/locustfile.py \
+                            --host=http://sre-demo-api.development \
+                            --users=100 \
+                            --spawn-rate=10 \
+                            --run-time=5m \
+                            --headless \
+                            --html=locust-report.html
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishHTML([
+                        reportDir: '.',
+                        reportFiles: 'locust-report.html',
+                        reportName: 'Load Test Report'
+                    ])
+                }
+            }
+        }
+    }
+    
+    // ==========================================================================
+    // Post-Build Actions
+    // ==========================================================================
+    post {
+        success {
+            script {
+                if (env.BRANCH_NAME == 'main') {
+                    // Notify success
+                    slackSend(
+                        color: 'good',
+                        message: "✅ Deployment successful: ${IMAGE_TAG}",
+                        channel: '#deployments'
+                    )
+                }
+            }
+        }
+        
+        failure {
+            script {
+                // Notify failure
+                slackSend(
+                    color: 'danger',
+                    message: "❌ Build failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                    channel: '#build-failures'
+                )
+                
+                // Auto-rollback on production failure
+                if (env.BRANCH_NAME == 'main') {
+                    container('kubectl') {
+                        sh """
+                            kubectl rollout undo deployment/sre-demo-api \
+                                -n production
+                        """
+                    }
+                }
+            }
+        }
+        
+        always {
+            cleanWs()
+        }
+    }
+}
+
+// ==============================================================================
+// JENKINS SETUP REQUIREMENTS:
+//
+// 1. Install Plugins:
+//    - Kubernetes
+//    - Docker Pipeline
+//    - Pipeline
+//    - SonarQube Scanner
+//    - Slack Notification
+//
+// 2. Configure Credentials:
+//    - docker-registry-creds (username/password)
+//    - k8s-config (secret file)
+//    - sonar-token (secret text)
+//
+// 3. Configure Tools:
+//    - SonarScanner
+//    - Docker
+//
+// 4. Webhook Setup:
+//    - GitHub webhook pointing to Jenkins
+//    - Trigger on push & PR
+// ==============================================================================

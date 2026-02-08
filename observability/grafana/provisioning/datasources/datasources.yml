@@ -1,0 +1,64 @@
+# ==============================================================================
+# Grafana Datasource Provisioning
+# ==============================================================================
+# Automatically configures datasources on Grafana startup
+# ==============================================================================
+
+apiVersion: 1
+
+datasources:
+  # ===========================================================================
+  # Prometheus - Metrics
+  # ===========================================================================
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+    editable: false
+
+  # ===========================================================================
+  # Loki - Logs
+  # ===========================================================================
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Link correlation IDs to traces in Jaeger
+        - datasourceUid: jaeger
+          matcherRegex: "correlation_id=(\\w+)"
+          name: "Trace"
+          url: "$${__value.raw}"
+    editable: false
+
+  # ===========================================================================
+  # Jaeger - Traces
+  # ===========================================================================
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['correlation_id']
+        mappedTags: [{ key: 'correlation_id', value: 'correlation_id' }]
+        mapTagNamesEnabled: true
+        filterByTraceID: false
+        filterBySpanID: false
+    editable: false
+
+  # ===========================================================================
+  # TestData (for demo purposes)
+  # ===========================================================================
+  - name: TestData
+    type: testdata
+    access: proxy
+    editable: false

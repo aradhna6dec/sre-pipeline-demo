@@ -1,0 +1,201 @@
+# ==============================================================================
+# Prometheus Alert Rules
+# ==============================================================================
+# SRE Golden Signals: Latency, Traffic, Errors, Saturation
+# ==============================================================================
+
+groups:
+  # ===========================================================================
+  # Application Health Alerts
+  # ===========================================================================
+  - name: application_health
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up{job="sre-demo-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Service {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://runbooks.company.com/service-down"
+
+      - alert: HighRestartRate
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High pod restart rate"
+          description: "Pod {{ $labels.pod }} is restarting frequently."
+
+  # ===========================================================================
+  # Latency Alerts (P95, P99)
+  # ===========================================================================
+  - name: latency
+    interval: 30s
+    rules:
+      - alert: HighP95Latency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High P95 latency on {{ $labels.endpoint }}"
+          description: "95th percentile latency is {{ $value }}s (threshold: 0.5s)"
+          runbook_url: "https://runbooks.company.com/high-latency"
+
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Critical P99 latency on {{ $labels.endpoint }}"
+          description: "99th percentile latency is {{ $value }}s (threshold: 1.0s)"
+
+  # ===========================================================================
+  # Error Rate Alerts
+  # ===========================================================================
+  - name: error_rate
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (instance)
+          /
+          sum(rate(http_requests_total[5m])) by (instance)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "High error rate on {{ $labels.instance }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://runbooks.company.com/high-error-rate"
+
+      - alert: Elevated4xxRate
+        expr: |
+          sum(rate(http_requests_total{status=~"4.."}[5m])) by (instance)
+          /
+          sum(rate(http_requests_total[5m])) by (instance)
+          > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Elevated 4xx rate on {{ $labels.instance }}"
+          description: "Client error rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+
+  # ===========================================================================
+  # Traffic Alerts
+  # ===========================================================================
+  - name: traffic
+    interval: 30s
+    rules:
+      - alert: TrafficSpike
+        expr: |
+          rate(http_requests_total[5m])
+          >
+          2 * avg_over_time(rate(http_requests_total[5m])[1h:5m])
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Traffic spike detected on {{ $labels.instance }}"
+          description: "Request rate is 2x the hourly average"
+
+      - alert: NoTraffic
+        expr: rate(http_requests_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "No traffic on {{ $labels.instance }}"
+          description: "No requests received in the last 5 minutes"
+
+  # ===========================================================================
+  # Saturation Alerts (Resource Usage)
+  # ===========================================================================
+  - name: saturation
+    interval: 30s
+    rules:
+      - alert: HighMemoryUsage
+        expr: |
+          (container_memory_usage_bytes / container_spec_memory_limit_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High memory usage on {{ $labels.pod }}"
+          description: "Memory usage is {{ $value }}% (threshold: 90%)"
+          runbook_url: "https://runbooks.company.com/high-memory"
+
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High CPU usage on {{ $labels.pod }}"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)"
+
+      - alert: CPUThrottling
+        expr: |
+          rate(container_cpu_cfs_throttled_seconds_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "CPU throttling on {{ $labels.pod }}"
+          description: "Container is being CPU throttled"
+
+  # ===========================================================================
+  # SLO Violations (Error Budget)
+  # ===========================================================================
+  - name: slo
+    interval: 1m
+    rules:
+      # 99.9% availability SLO (43.2 minutes downtime/month)
+      - alert: SLOViolation
+        expr: |
+          (
+            sum(rate(http_requests_total{status!~"5.."}[30d]))
+            /
+            sum(rate(http_requests_total[30d]))
+          ) < 0.999
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "SLO violation - 99.9% availability target missed"
+          description: "Current availability: {{ $value | humanizePercentage }}"
+          runbook_url: "https://runbooks.company.com/slo-violation"
+
+  # ===========================================================================
+  # Database Alerts (for future use)
+  # ===========================================================================
+  # - name: database
+  #   interval: 30s
+  #   rules:
+  #     - alert: SlowDatabaseQueries
+  #       expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m])) > 1.0
+  #       for: 5m
+  #       labels:
+  #         severity: warning
+  #       annotations:
+  #         summary: "Slow database queries detected"
+  #         description: "P95 query time is {{ $value }}s"

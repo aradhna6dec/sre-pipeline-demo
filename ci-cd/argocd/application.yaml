@@ -1,0 +1,209 @@
+# ==============================================================================
+# ArgoCD Application - GitOps Deployment
+# ==============================================================================
+# This defines how ArgoCD should deploy and manage the application
+# ==============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sre-demo-api-prod
+  namespace: argocd
+  # Finalizer ensures cascade deletion
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    environment: production
+    team: sre
+spec:
+  # ===========================================================================
+  # Project
+  # ===========================================================================
+  project: default  # Or create a dedicated AppProject
+  
+  # ===========================================================================
+  # Source Repository
+  # ===========================================================================
+  source:
+    # Git repository containing K8s manifests
+    repoURL: https://github.com/your-org/sre-pipeline-demo.git
+    targetRevision: main
+    path: k8s/overlays/prod
+    
+    # Kustomize settings
+    kustomize:
+      version: v5.0.0
+      images:
+        - your-registry.io/sre-demo-api:*  # Image will be updated by CI
+  
+  # ===========================================================================
+  # Destination Cluster
+  # ===========================================================================
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  
+  # ===========================================================================
+  # Sync Policy
+  # ===========================================================================
+  syncPolicy:
+    automated:
+      # Automatically sync when Git changes
+      prune: true        # Delete resources not in Git
+      selfHeal: true     # Force sync if cluster state drifts
+      allowEmpty: false  # Don't sync if no resources
+    
+    syncOptions:
+      - CreateNamespace=true  # Create namespace if it doesn't exist
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true  # Prune resources as last step
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # ===========================================================================
+  # Health Assessment
+  # ===========================================================================
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Ignore HPA-managed replicas
+  
+  # ===========================================================================
+  # Notifications & Webhooks
+  # ===========================================================================
+  # Configure via ArgoCD notifications controller
+
+---
+# ==============================================================================
+# ArgoCD Application - Development
+# ==============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sre-demo-api-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    environment: development
+    team: sre
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/your-org/sre-pipeline-demo.git
+    targetRevision: develop
+    path: k8s/overlays/dev
+    kustomize:
+      version: v5.0.0
+      images:
+        - your-registry.io/sre-demo-api:*
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: development
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+---
+# ==============================================================================
+# AppProject - Logical Grouping (Optional)
+# ==============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: sre-demo
+  namespace: argocd
+spec:
+  description: SRE Demo API Project
+  
+  # Allow all sources
+  sourceRepos:
+    - 'https://github.com/your-org/*'
+  
+  # Allow deployment to specific namespaces
+  destinations:
+    - namespace: 'production'
+      server: https://kubernetes.default.svc
+    - namespace: 'development'
+      server: https://kubernetes.default.svc
+    - namespace: 'staging'
+      server: https://kubernetes.default.svc
+  
+  # Cluster resource whitelist
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: ''
+      kind: PersistentVolume
+  
+  # Namespace resource whitelist (allow all in allowed namespaces)
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  
+  # Orphaned resources monitoring
+  orphanedResources:
+    warn: true
+  
+  # Roles for RBAC
+  roles:
+    - name: read-only
+      description: Read-only access
+      policies:
+        - p, proj:sre-demo:read-only, applications, get, sre-demo/*, allow
+      groups:
+        - developers
+    
+    - name: deployer
+      description: Can sync applications
+      policies:
+        - p, proj:sre-demo:deployer, applications, sync, sre-demo/*, allow
+      groups:
+        - sre-team
+
+# ==============================================================================
+# ARGOCD SETUP:
+#
+# 1. Install ArgoCD:
+#    kubectl create namespace argocd
+#    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+# 2. Access ArgoCD UI:
+#    kubectl port-forward svc/argocd-server -n argocd 8080:443
+#    Password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+#
+# 3. Add repository:
+#    argocd repo add https://github.com/your-org/sre-pipeline-demo.git
+#
+# 4. Create application:
+#    kubectl apply -f ci-cd/argocd/application.yaml
+#
+# 5. Sync application:
+#    argocd app sync sre-demo-api-prod
+#
+# IMAGE UPDATE WORKFLOW:
+# 1. CI builds image: your-registry.io/sre-demo-api:main-abc123
+# 2. CI updates k8s/overlays/prod/kustomization.yaml with new image tag
+# 3. CI commits & pushes to Git
+# 4. ArgoCD detects change and syncs automatically
+# ==============================================================================

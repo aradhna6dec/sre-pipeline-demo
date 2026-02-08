@@ -1,0 +1,43 @@
+# ==============================================================================
+# Kustomize Base - Common Resources
+# ==============================================================================
+# Shared configuration across all environments
+# ==============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: production
+
+# Common labels applied to all resources
+commonLabels:
+  app: sre-demo-api
+  managed-by: kustomize
+
+# Resources to include
+resources:
+  - deployment.yaml
+  - service.yaml
+  - config.yaml
+  - ingress.yaml
+  - namespace.yaml
+
+# ConfigMap generator (for non-sensitive config)
+configMapGenerator:
+  - name: sre-demo-api-config
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+
+# Secret generator (use with caution - prefer external secrets)
+# secretGenerator:
+#   - name: sre-demo-api-secrets
+#     literals:
+#       - DATABASE_URL=change-me
+
+# Images (will be overridden by overlays)
+images:
+  - name: sre-demo-api
+    newName: your-registry.io/sre-demo-api
+    newTag: latest
