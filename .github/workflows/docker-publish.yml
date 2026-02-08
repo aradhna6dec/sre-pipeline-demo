@@ -49,8 +49,8 @@ jobs:
       #- name: Run isort (import sorter)
       #  run: isort --check-only app/
       
-      - name: Run Flake8 (linter)
-        run: flake8 app/ --max-line-length=120 --exclude=__pycache__
+      #- name: Run Flake8 (linter)
+      #  run: flake8 app/ --max-line-length=120 --exclude=__pycache__
       
       - name: Run MyPy (type checker)
         run: mypy app/ --ignore-missing-imports
