@@ -71,6 +71,9 @@ jobs:
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions: # <--- ADD THIS BLOCK
+      contents: read      # <--- ADD THIS
+      security-events: write # <--- CRITICAL FOR THE FIX
     steps:
       - uses: actions/checkout@v4
       
