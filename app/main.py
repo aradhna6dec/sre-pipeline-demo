@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -216,7 +216,7 @@ async def root() -> Dict[str, Any]:
 app.include_router(api_router, prefix="/api/v1")
 
 # OpenTelemetry instrumentation
-FastAPIInstrumentation.instrument_app(app)
+FastAPIInstrumentor.instrument_app(app)
 
 
 if __name__ == "__main__":
