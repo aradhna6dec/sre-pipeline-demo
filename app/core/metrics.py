@@ -7,7 +7,8 @@ Following Google SRE's "Four Golden Signals":
 4. Saturation - process_* metrics (CPU, memory)
 """
 
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Gauge, Histogram, Info
+
 from app.core.config import settings
 
 

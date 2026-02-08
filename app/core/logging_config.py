@@ -3,11 +3,11 @@ Structured Logging Configuration
 Outputs JSON for easy parsing by Loki/ELK
 """
 
+import json
 import logging
 import sys
-from typing import Any, Dict
-import json
 from datetime import datetime
+from typing import Any, Dict
 
 from app.core.config import settings
 

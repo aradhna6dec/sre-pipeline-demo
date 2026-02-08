@@ -13,25 +13,20 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Any, Dict
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import (
-    Counter,
-    Histogram,
-    Gauge,
-    generate_latest,
-    CONTENT_TYPE_LATEST,
-)
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
+from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Gauge, Histogram,
+                               generate_latest)
 
-from app.core.config import settings
-from app.core.logging_config import setup_logging, get_logger
-from app.core.metrics import metrics
 from app.api.routes import api_router
+from app.core.config import settings
+from app.core.logging_config import get_logger, setup_logging
+from app.core.metrics import metrics
 
 # Initialize logging
 setup_logging()
