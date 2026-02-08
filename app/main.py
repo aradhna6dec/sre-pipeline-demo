@@ -18,7 +18,13 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import (
+    Counter,
+    Histogram,
+    Gauge,
+    generate_latest,
+    CONTENT_TYPE_LATEST,
+)
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
 
@@ -43,19 +49,22 @@ app_state = {
 async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown"""
     # Startup
-    logger.info("Starting application", extra={
-        "app_name": settings.APP_NAME,
-        "version": settings.VERSION,
-        "environment": settings.ENVIRONMENT
-    })
-    
+    logger.info(
+        "Starting application",
+        extra={
+            "app_name": settings.APP_NAME,
+            "version": settings.VERSION,
+            "environment": settings.ENVIRONMENT,
+        },
+    )
+
     # Simulate initialization (DB connections, cache warmup, etc.)
     await asyncio.sleep(0.5)
     app_state["ready"] = True
     logger.info("Application ready to serve traffic")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Initiating graceful shutdown")
     app_state["ready"] = False
@@ -89,29 +98,28 @@ async def add_correlation_id(request: Request, call_next):
     """Add correlation ID to all requests for tracing"""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     request.state.correlation_id = correlation_id
-    
+
     # Track request
     metrics.http_requests_total.labels(
-        method=request.method,
-        endpoint=request.url.path
+        method=request.method, endpoint=request.url.path
     ).inc()
-    
+
     # Time the request
     start_time = time.time()
-    
+
     try:
         response = await call_next(request)
-        
+
         # Record metrics
         duration = time.time() - start_time
         metrics.http_request_duration_seconds.labels(
             method=request.method,
             endpoint=request.url.path,
-            status=response.status_code
+            status=response.status_code,
         ).observe(duration)
-        
+
         response.headers["X-Correlation-ID"] = correlation_id
-        
+
         logger.info(
             "Request completed",
             extra={
@@ -119,12 +127,12 @@ async def add_correlation_id(request: Request, call_next):
                 "method": request.method,
                 "path": request.url.path,
                 "status_code": response.status_code,
-                "duration_ms": round(duration * 1000, 2)
-            }
+                "duration_ms": round(duration * 1000, 2),
+            },
         )
-        
+
         return response
-    
+
     except Exception as e:
         logger.error(
             "Request failed",
@@ -132,13 +140,12 @@ async def add_correlation_id(request: Request, call_next):
                 "correlation_id": correlation_id,
                 "method": request.method,
                 "path": request.url.path,
-                "error": str(e)
+                "error": str(e),
             },
-            exc_info=True
+            exc_info=True,
         )
         metrics.http_requests_total.labels(
-            method=request.method,
-            endpoint=request.url.path
+            method=request.method, endpoint=request.url.path
         ).inc()
         raise
 
@@ -164,12 +171,11 @@ async def readiness_probe() -> Response:
             status_code=status.HTTP_200_OK,
             content={
                 "status": "ready",
-                "uptime_seconds": round(time.time() - app_state["start_time"], 2)
-            }
+                "uptime_seconds": round(time.time() - app_state["start_time"], 2),
+            },
         )
     return JSONResponse(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"status": "not_ready"}
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"status": "not_ready"}
     )
 
 
@@ -181,22 +187,17 @@ async def startup_probe() -> Response:
     """
     if app_state["ready"]:
         return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"status": "started"}
+            status_code=status.HTTP_200_OK, content={"status": "started"}
         )
     return JSONResponse(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"status": "starting"}
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"status": "starting"}
     )
 
 
 @app.get("/metrics", tags=["observability"])
 async def prometheus_metrics():
     """Prometheus metrics endpoint"""
-    return Response(
-        content=generate_latest(),
-        media_type=CONTENT_TYPE_LATEST
-    )
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/", tags=["root"])
@@ -207,7 +208,7 @@ async def root() -> Dict[str, Any]:
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
         "status": "operational",
-        "uptime_seconds": round(time.time() - app_state["start_time"], 2)
+        "uptime_seconds": round(time.time() - app_state["start_time"], 2),
     }
 
 
@@ -220,7 +221,7 @@ FastAPIInstrumentation.instrument_app(app)
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
