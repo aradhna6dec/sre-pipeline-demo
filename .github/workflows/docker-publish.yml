@@ -117,11 +117,11 @@ jobs:
           pip install -r requirements.txt
           # Install safety separately if it continues to conflict with Pydantic 2.x
           pip install safety --upgrade || true 
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
           pip install pytest pytest-cov pytest-asyncio
       
       - name: Run tests with coverage
         run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
           pytest tests/ \
             --cov=app \
             --cov-report=xml \
