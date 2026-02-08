@@ -114,9 +114,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # Install safety separately if it continues to conflict with Pydantic 2.x
-          pip install safety --upgrade || true 
+          # --no-cache-dir ensures we don't use old, broken versions
+          pip install --upgrade --no-cache-dir -r requirements.txt
           pip install pytest pytest-cov pytest-asyncio
       
       - name: Run tests with coverage
